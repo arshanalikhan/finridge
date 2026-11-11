@@ -23,8 +23,8 @@ a{color:inherit;text-decoration:none}
 
 #scene{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
 .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
-  background:radial-gradient(120% 80% at 50% 40%,transparent 40%,rgba(7,11,22,.85) 100%),
-             linear-gradient(to bottom,rgba(7,11,22,.6),transparent 18%,transparent 70%,rgba(7,11,22,.7))}
+  background:radial-gradient(130% 90% at 50% 40%,transparent 55%,rgba(10,6,24,.55) 100%),
+             linear-gradient(to bottom,rgba(10,6,24,.5),transparent 16%)}
 
 header{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;justify-content:space-between;
   padding:22px var(--pad);transition:background .4s var(--ease),backdrop-filter .4s}
@@ -232,12 +232,23 @@ const renderer = new THREE.WebGLRenderer({canvas, antialias:true, powerPreferenc
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x070b16);
-scene.fog = new THREE.FogExp2(0x070b16, 0.0052);
-const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
+scene.background = new THREE.Color(0x140a2a);
+scene.fog = new THREE.FogExp2(0x4a1e52, 0.0024);           // light purple haze toward the horizon
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000);
 
-scene.add(new THREE.HemisphereLight(0x6f8fe8, 0x0b1124, 2.2));
-const sun = new THREE.DirectionalLight(0xffc56b, 2.2); sun.position.set(-30, 20, -60); scene.add(sun);
+/* night sky: deep indigo overhead fading to a magenta city glow at the horizon */
+const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), new THREE.ShaderMaterial({
+  side:THREE.BackSide, depthWrite:false, fog:false,
+  vertexShader:`varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+  fragmentShader:`varying vec3 vP; void main(){
+    float y = vP.y;
+    vec3 hz = vec3(.62,.24,.42), mid = vec3(.2,.09,.3), top = vec3(.05,.03,.14);
+    vec3 c = mix(hz, mid, smoothstep(-.02, .1, y)); c = mix(c, top, smoothstep(.1, .5, y));
+    gl_FragColor = vec4(c, 1.); }`}));
+scene.add(sky);
+
+scene.add(new THREE.HemisphereLight(0x8a8ff0, 0x3a1608, 2.2));
+const sun = new THREE.DirectionalLight(0xff9a5a, 1.6); sun.position.set(-30, 20, -60); scene.add(sun);
 
 /* procedural skyline: instanced towers with lit-window shader */
 const rand = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(42);
@@ -257,21 +268,23 @@ towerMat.onBeforeCompile = sh => {
         vec2 cell = floor(uv*vec2(1.6,2.2)); vec2 f = fract(uv*vec2(1.6,2.2));
         float win = step(.25,f.x)*step(f.x,.75)*step(.3,f.y)*step(f.y,.75);
         float on = step(.62,h(cell+floor(vW.xz*.1)));
-        totalEmissiveRadiance += vec3(1.,.72,.32)*win*on*2.2;
+        vec3 lit = mix(vec3(.7,.85,1.), vec3(1.,.72,.4), step(.72, h(cell*3.1+5.)));  // cool white offices, some warm
+        totalEmissiveRadiance += lit*win*on*2.;
       }`);
 };
-const N = 520, box = new THREE.BoxGeometry(1,1,1); box.translate(0,.5,0);
+const N = 1100, box = new THREE.BoxGeometry(1,1,1); box.translate(0,.5,0);
 const towers = new THREE.InstancedMesh(box, towerMat, N);
-const m = new THREE.Matrix4(); let k = 0;
+const m = new THREE.Matrix4(); let k = 0; const aviation = [];
 for (let i = 0; i < N * 3 && k < N; i++) {
-  const x = (rand() - .5) * 120, z = -rand() * 200 + 20;
+  const x = (rand() - .5) * 260, z = -rand() * 200 - 10;
   if (Math.abs(x) < 4.5) continue;                       // keep a boulevard open for the camera
   if (Math.hypot(x, z + 150) < 24) continue;             // clear plaza around the Burj
-  const near = 1 - Math.min(1, Math.abs(x) / 60);
+  const near = 1 - Math.min(1, Math.abs(x) / 110);
   const h = 3 + Math.pow(rand(), 2.2) * 28 * (0.5 + near);
   const w = 1.6 + rand() * 3;
   m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(w, h, w * (0.7 + rand() * .6)));
   towers.setMatrixAt(k++, m);
+  if (h > 16) aviation.push(x, h + .4, z);
 }
 towers.count = k; scene.add(towers);
 
@@ -280,11 +293,11 @@ towers.count = k; scene.add(towers);
 const spire = new THREE.Group();
 /* night look: silver-blue glass, cool-white floor lights, vertical light strips on the fins,
    floodlit glow at the base fading up, brightening again toward the crown */
-const spireMat = new THREE.MeshStandardMaterial({color:0x6c7f99, metalness:.85, roughness:.18, emissive:0x050a16});
+const spireMat = new THREE.MeshStandardMaterial({color:0x8ea2c4, metalness:.8, roughness:.2, emissive:0x22345e});
 spireMat.onBeforeCompile = sh => {
   sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; varying vec3 vN;')
     .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvW=(modelMatrix*vec4(transformed,1.)).xyz; vN=normalize(mat3(modelMatrix)*objectNormal);');
-  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; varying vec3 vN;\nfloat h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}')
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; varying vec3 vN;\n#define STEPH 6.2\nfloat h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}')
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       if(abs(vN.y)<.6){
         float ang = atan(vW.z+150., vW.x);
@@ -292,11 +305,13 @@ spireMat.onBeforeCompile = sh => {
         float win = step(.2,f.x)*step(f.x,.8)*step(.25,f.y)*step(f.y,.7);
         float on = step(.35,h(cell));
         vec3 cool = mix(vec3(.75,.85,1.), vec3(1.,.95,.85), h(cell+7.));      // mostly cool white, some warm
-        totalEmissiveRadiance += cool*win*on*.75;
-        float strip = 1. - smoothstep(0., .035, abs(fract(ang*6./3.14159)-.5)); // thin vertical LED fins
-        totalEmissiveRadiance += vec3(.55,.75,1.)*strip*.6;
-        float base = exp(-vW.y/10.)*.5;                                      // floodlights at the podium
-        float crown = smoothstep(105.,128.,vW.y)*.35;                         // softly brighter crown
+        totalEmissiveRadiance += cool*win*on*2.2;
+        float strip = 1. - smoothstep(0., .05, abs(fract(ang*6./3.14159)-.5)); // vertical LED fins
+        totalEmissiveRadiance += vec3(.6,.8,1.)*strip*1.4;
+        float band = smoothstep(.35,.0,abs(fract(vW.y/STEPH)-.5)-.12);          // bright floor bands at each setback
+        totalEmissiveRadiance += vec3(.7,.85,1.)*band*.5;
+        float base = exp(-vW.y/10.)*.6;                                      // floodlights at the podium
+        float crown = smoothstep(95.,128.,vW.y)*1.1;                          // floodlit crown, like the photo
         totalEmissiveRadiance += vec3(1.,.9,.75)*base + vec3(.7,.85,1.)*crown;
       }`);
 };
@@ -321,12 +336,67 @@ beacon.position.y = 170.5; spire.add(beacon);
 spire.position.set(0, 0, -150); scene.add(spire);
 const spireKey = new THREE.PointLight(0xcfdcff, 700, 200); spireKey.position.set(30, 90, -110); scene.add(spireKey);
 
-/* ground with gold grid */
-const grid = new THREE.GridHelper(400, 160, 0xf4b63f, 0x1b2a4d);
-grid.material.transparent = true; grid.material.opacity = .22; scene.add(grid);
+/* red aviation lights on the taller towers */
+const avG = new THREE.BufferGeometry(); avG.setAttribute('position', new THREE.Float32BufferAttribute(aviation, 3));
+const avMat = new THREE.PointsMaterial({color:0xff2a3a, size:.9, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
+scene.add(new THREE.Points(avG, avMat));
+
+/* ground: dark asphalt, warmed by sodium light around the interchange */
+const gc = document.createElement('canvas'); gc.width = gc.height = 256;
+const gx = gc.getContext('2d'), gr = gx.createRadialGradient(128, 128, 0, 128, 128, 128);
+gr.addColorStop(0, '#a8461a'); gr.addColorStop(.06, '#7a3212'); gr.addColorStop(.18, '#2a1418'); gr.addColorStop(1, '#2a1230');
+gx.fillStyle = gr; gx.fillRect(0, 0, 256, 256);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800), new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(gc)}));
+ground.rotation.x = -Math.PI / 2; ground.position.set(0, 0, 60); scene.add(ground);
+
+/* highway interchange: orange-lit roads, loops, a flyover, with moving light trails */
+const roadMat = new THREE.MeshBasicMaterial({color:0xff9a4a, toneMapped:false});
+const rail = new THREE.MeshStandardMaterial({color:0x0b0b14, roughness:.6});
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const loop = (cx, cz, r, y) => Array.from({length:13}, (_, i) => { const a = i / 12 * Math.PI * 2; return V(cx + Math.cos(a) * r, y, cz + Math.sin(a) * r); });
+const roadDefs = [
+  [[V(-7,.3,170), V(-7,.3,-220)], .55], [[V(7,.3,170), V(7,.3,-220)], .55],          // main highway along the boulevard
+  [[V(-11,.3,170), V(-11,.3,-220)], .4], [[V(11,.3,170), V(11,.3,-220)], .4],
+  [[V(-200,.3,22), V(200,.3,22)], .5], [[V(-200,.3,28), V(200,.3,28)], .5],           // cross highway
+  [[V(-200,2.5,70), V(-60,3,62), V(0,4,58), V(60,3,62), V(200,2.5,70)], .45],        // elevated arc
+  [[...loop(-28, 48, 13, 2.2)], .45, true], [[...loop(28, 48, 13, 2.2)], .45, true],   // cloverleaf loops
+  [[V(-7,.3,95), V(-18,2,70), V(-38,2.2,48), V(-60,1.5,30), V(-120,.3,24)], .4],      // ramps
+  [[V(7,.3,95), V(18,2,70), V(38,2.2,48), V(60,1.5,30), V(120,.3,24)], .4],
+  [[V(-7,.3,10), V(-22,2,40), V(-15,3,80), V(-2,3.5,130)], .35],
+  [[V(7,.3,10), V(22,2,40), V(15,3,80), V(2,3.5,130)], .35],
+];
+const roadCurves = [];
+roadDefs.forEach(([pts, w, closed]) => {
+  const c = new THREE.CatmullRomCurve3(pts, !!closed);
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(c, 240, w * 2.4, 5, !!closed), roadMat));
+  roadCurves.push(c);
+});
+// dark metro viaduct sweeping across, like the photo
+const metro = new THREE.CatmullRomCurve3([V(-160,8,150), V(-40,9,90), V(10,9,50), V(40,9,0), V(110,8,-60)]);
+scene.add(new THREE.Mesh(new THREE.TubeGeometry(metro, 240, 1.1, 8, false), rail));
+
+const TR = 70, trails = [], trG = new THREE.BufferGeometry();
+const trPos = new Float32Array(roadCurves.length * TR * 3), trCol = new Float32Array(roadCurves.length * TR * 3);
+roadCurves.forEach((c, ci) => { for (let i = 0; i < TR; i++) {
+  const red = rand() < .45, j = (ci * TR + i) * 3;
+  trails.push({c, t:rand(), v:(.02 + rand() * .03) * (red ? -1 : 1)});
+  trCol.set(red ? [1, .15, .1] : [1, .95, .85], j);
+}});
+trG.setAttribute('position', new THREE.BufferAttribute(trPos, 3));
+trG.setAttribute('color', new THREE.BufferAttribute(trCol, 3));
+scene.add(new THREE.Points(trG, new THREE.PointsMaterial({size:1.6, vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending})));
+const trPt = new THREE.Vector3();
+function updateTrails(dt){
+  trails.forEach((p, i) => {
+    p.t = (p.t + p.v * dt + 1) % 1; p.c.getPointAt(p.t, trPt);
+    trPos[i*3] = trPt.x; trPos[i*3+1] = trPt.y + 1.2; trPos[i*3+2] = trPt.z;
+  });
+  trG.attributes.position.needsUpdate = true;
+}
+updateTrails(0);
 
 /* gold particles ("capital flowing") */
-const P = 2200, pg = new THREE.BufferGeometry(), pp = new Float32Array(P * 3);
+const P = 1200, pg = new THREE.BufferGeometry(), pp = new Float32Array(P * 3);
 for (let i = 0; i < P; i++) { pp[i*3] = (rand()-.5)*90; pp[i*3+1] = rand()*60; pp[i*3+2] = -rand()*200 + 20; }
 pg.setAttribute('position', new THREE.BufferAttribute(pp, 3));
 const dust = new THREE.Points(pg, new THREE.PointsMaterial({color:0xf4b63f, size:.18, transparent:true, opacity:.75, depthWrite:false, blending:THREE.AdditiveBlending}));
@@ -334,14 +404,14 @@ scene.add(dust);
 
 /* ---------- camera path driven by scroll ---------- */
 const path = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(0, 60, 90),     // hero: high over the city, Burj on the horizon
+  new THREE.Vector3(0, 75, 125),    // hero: high above the interchange, Burj on the skyline
   new THREE.Vector3(14, 18, 10),    // about: dive in, banking right
   new THREE.Vector3(0, 6, -40),     // services: down the boulevard
   new THREE.Vector3(-30, 40, -90),  // partners: rise beside the Burj
   new THREE.Vector3(48, 120, -92),  // contact: orbit up to the summit
 ]);
 const look = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(0, 75, -140), new THREE.Vector3(-4, 20, -80), new THREE.Vector3(0, 40, -150),
+  new THREE.Vector3(0, 25, -150), new THREE.Vector3(-4, 20, -80), new THREE.Vector3(0, 40, -150),
   new THREE.Vector3(0, 70, -150), new THREE.Vector3(0, 125, -150),
 ]);
 const state = {t:0}, cur = {t:0};
@@ -365,7 +435,7 @@ document.querySelectorAll('main section').forEach((sec, i) => {
 const mouse = {x:0, y:0};
 addEventListener('pointermove', e => { mouse.x = e.clientX / innerWidth - .5; mouse.y = e.clientY / innerHeight - .5; });
 function resize(){ const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h;
-  camera.fov = w < 700 ? 64 : 50; camera.updateProjectionMatrix(); }
+  camera.fov = w < 700 ? 70 : 60; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
 
 const tmp = new THREE.Vector3(), tgt = new THREE.Vector3(), clock = new THREE.Clock();
@@ -375,7 +445,10 @@ function frame(){
   path.getPointAt(cur.t, tmp); look.getPointAt(cur.t, tgt);
   camera.position.set(tmp.x + mouse.x * 3, tmp.y - mouse.y * 2, tmp.z);
   camera.lookAt(tgt);
+  sky.position.copy(camera.position);
   if (!reduce) {
+    updateTrails(dt);
+    avMat.opacity = .35 + .65 * (Math.sin(el * 2.4) > 0 ? 1 : 0);
     const a = pg.attributes.position.array;
     for (let i = 1; i < a.length; i += 3) { a[i] += dt * 1.2; if (a[i] > 60) a[i] = 0; }
     pg.attributes.position.needsUpdate = true;

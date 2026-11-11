@@ -59,7 +59,9 @@ em{font-family:"Instrument Serif",serif;font-style:italic;color:var(--gold);lett
 #hero::before,#about::before,#partners::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
   background:linear-gradient(90deg,rgba(7,11,22,.88) 0%,rgba(7,11,22,.55) 40%,transparent 70%)}
 #about::before{background:linear-gradient(270deg,rgba(7,11,22,.88) 0%,rgba(7,11,22,.55) 40%,transparent 70%)}
-#about,#partners{position:relative}
+#about,#partners,#contact{position:relative}
+#contact::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(60% 45% at 50% 50%,rgba(7,11,22,.85),rgba(7,11,22,.4) 70%,transparent)}
 #hero .cta{display:flex;gap:12px;flex-wrap:wrap}
 .scroll-hint{position:absolute;right:var(--pad);bottom:14vh;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--mute);
   writing-mode:vertical-rl;display:flex;align-items:center;gap:14px}
@@ -276,8 +278,28 @@ towers.count = k; scene.add(towers);
 /* the spire: signature tower at the end of the boulevard */
 /* Burj Khalifa: Y-shaped plan, three wings stepping back in a spiral, central core, then the spire */
 const spire = new THREE.Group();
-const spireMat = new THREE.MeshStandardMaterial({color:0x9fb2e0, metalness:.75, roughness:.22});
-spireMat.onBeforeCompile = towerMat.onBeforeCompile;           // same lit-window shader as the city
+/* night look: silver-blue glass, cool-white floor lights, vertical light strips on the fins,
+   floodlit glow at the base fading up, brightening again toward the crown */
+const spireMat = new THREE.MeshStandardMaterial({color:0x6c7f99, metalness:.85, roughness:.18, emissive:0x050a16});
+spireMat.onBeforeCompile = sh => {
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; varying vec3 vN;')
+    .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvW=(modelMatrix*vec4(transformed,1.)).xyz; vN=normalize(mat3(modelMatrix)*objectNormal);');
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; varying vec3 vN;\nfloat h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}')
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      if(abs(vN.y)<.6){
+        float ang = atan(vW.z+150., vW.x);
+        vec2 cell = floor(vec2(ang*38., vW.y*1.6)); vec2 f = fract(vec2(ang*38., vW.y*1.6));
+        float win = step(.2,f.x)*step(f.x,.8)*step(.25,f.y)*step(f.y,.7);
+        float on = step(.35,h(cell));
+        vec3 cool = mix(vec3(.75,.85,1.), vec3(1.,.95,.85), h(cell+7.));      // mostly cool white, some warm
+        totalEmissiveRadiance += cool*win*on*.75;
+        float strip = 1. - smoothstep(0., .035, abs(fract(ang*6./3.14159)-.5)); // thin vertical LED fins
+        totalEmissiveRadiance += vec3(.55,.75,1.)*strip*.6;
+        float base = exp(-vW.y/10.)*.5;                                      // floodlights at the podium
+        float crown = smoothstep(105.,128.,vW.y)*.35;                         // softly brighter crown
+        totalEmissiveRadiance += vec3(1.,.9,.75)*base + vec3(.7,.85,1.)*crown;
+      }`);
+};
 const STEP = 6.2;
 const lobeGeo = new THREE.CylinderGeometry(1, 1, 1, 48, 1);
 [13, 15, 17].forEach((steps, w) => {
@@ -293,11 +315,11 @@ const lobeGeo = new THREE.CylinderGeometry(1, 1, 1, 48, 1);
 });
 const core = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 4.6, 128, 48), spireMat); core.position.y = 64; spire.add(core);
 const needle = new THREE.Mesh(new THREE.CylinderGeometry(.12, 1.6, 42, 32), spireMat); needle.position.y = 149; spire.add(needle);
-const tip = new THREE.PointLight(0x5cc653, 120, 80); tip.position.y = 172; spire.add(tip);
-const beacon = new THREE.Mesh(new THREE.SphereGeometry(.6, 16, 16), new THREE.MeshBasicMaterial({color:0xb6ffae}));
+const tip = new THREE.PointLight(0xdfe9ff, 160, 80); tip.position.y = 172; spire.add(tip);
+const beacon = new THREE.Mesh(new THREE.SphereGeometry(.6, 16, 16), new THREE.MeshBasicMaterial({color:0xffffff}));
 beacon.position.y = 170.5; spire.add(beacon);
 spire.position.set(0, 0, -150); scene.add(spire);
-const spireKey = new THREE.PointLight(0xffc56b, 2500, 200); spireKey.position.set(30, 90, -110); scene.add(spireKey);
+const spireKey = new THREE.PointLight(0xcfdcff, 700, 200); spireKey.position.set(30, 90, -110); scene.add(spireKey);
 
 /* ground with gold grid */
 const grid = new THREE.GridHelper(400, 160, 0xf4b63f, 0x1b2a4d);
@@ -357,7 +379,8 @@ function frame(){
     const a = pg.attributes.position.array;
     for (let i = 1; i < a.length; i += 3) { a[i] += dt * 1.2; if (a[i] > 60) a[i] = 0; }
     pg.attributes.position.needsUpdate = true;
-    beacon.material.color.setScalar(1).lerp(new THREE.Color(0x5cc653), .5 + .5 * Math.sin(el * 3));
+    const strobe = (el % 1.5) < .12 ? 1 : .08;                 // white aircraft-warning strobe on the spire
+    beacon.material.color.setScalar(strobe); tip.intensity = 40 + 400 * strobe;
   }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

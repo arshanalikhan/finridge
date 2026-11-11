@@ -260,11 +260,13 @@ towerMat.onBeforeCompile = sh => {
       #ifdef USE_INSTANCING
         iM = instanceMatrix;
       #endif
-      vW=(modelMatrix*iM*vec4(transformed,1.)).xyz; vN=normalize(mat3(modelMatrix*iM)*objectNormal);`);
-  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; varying vec3 vN;\nfloat h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}')
+      vW=(modelMatrix*iM*vec4(transformed,1.)).xyz; vN=normalize(mat3(modelMatrix*iM)*objectNormal);
+      vC=(modelMatrix*iM*vec4(0.,0.,0.,1.)).xyz;`).replace('varying vec3 vW; varying vec3 vN;', 'varying vec3 vW; varying vec3 vN; varying vec3 vC;');
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; varying vec3 vN; varying vec3 vC;\nfloat h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}')
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       if(abs(vN.y)<.5){
-        vec2 uv = vec2(abs(vN.x)>.5?vW.z:vW.x, vW.y);
+        vec2 d = vW.xz - vC.xz;                                     // wrap windows around any shape (round or square)
+        vec2 uv = vec2(atan(d.y, d.x) * max(length(d), .5) + vC.x * 3.7, vW.y);
         vec2 cell = floor(uv*vec2(1.6,2.2)); vec2 f = fract(uv*vec2(1.6,2.2));
         float win = step(.25,f.x)*step(f.x,.75)*step(.3,f.y)*step(f.y,.75);
         float on = step(.62,h(cell+floor(vW.xz*.1)));
@@ -272,21 +274,41 @@ towerMat.onBeforeCompile = sh => {
         totalEmissiveRadiance += lit*win*on*2.;
       }`);
 };
-const N = 1100, box = new THREE.BoxGeometry(1,1,1); box.translate(0,.5,0);
-const towers = new THREE.InstancedMesh(box, towerMat, N);
-const m = new THREE.Matrix4(); let k = 0; const aviation = [];
-for (let i = 0; i < N * 3 && k < N; i++) {
+/* a mix of tower shapes so the skyline isn't a field of identical boxes */
+const g = (geo) => { geo.translate(0, .5, 0); return geo; };
+const kinds = [
+  {geo:g(new THREE.BoxGeometry(1, 1, 1)), w:.32},                        // slab, rotated
+  {geo:g(new THREE.CylinderGeometry(.5, .5, 1, 32)), w:.22},              // round tower
+  {geo:g(new THREE.CylinderGeometry(.32, .55, 1, 32)), w:.16},            // tapered round
+  {geo:g(new THREE.CylinderGeometry(.42, .55, 1, 6)), w:.12},             // hexagonal
+  {geo:g(new THREE.CylinderGeometry(.5, .5, 1, 3)), w:.08},               // triangular wedge
+  {geo:g(new THREE.CylinderGeometry(.45, .6, 1, 8)), w:.10},              // octagon
+];
+const N = 1100, mats = kinds.map(() => []);
+const crowns = [], aviation = [];
+for (let i = 0, k = 0; i < N * 3 && k < N; i++) {
   const x = (rand() - .5) * 260, z = -rand() * 200 - 10;
-  if (Math.abs(x) < 4.5) continue;                       // keep a boulevard open for the camera
+  if (Math.abs(x) < 14 && z > -130) continue;            // keep the highway corridor open
   if (Math.hypot(x, z + 150) < 24) continue;             // clear plaza around the Burj
   const near = 1 - Math.min(1, Math.abs(x) / 110);
-  const h = 3 + Math.pow(rand(), 2.2) * 28 * (0.5 + near);
-  const w = 1.6 + rand() * 3;
-  m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(w, h, w * (0.7 + rand() * .6)));
-  towers.setMatrixAt(k++, m);
-  if (h > 16) aviation.push(x, h + .4, z);
+  let h = 3 + Math.pow(rand(), 2.4) * 30 * (0.5 + near);
+  if (rand() < .04) h *= 1.8;                            // a few supertall landmarks
+  const w = 2 + rand() * 3.2;
+  let r = rand(), ki = 0; while (r > kinds[ki].w && ki < kinds.length - 1) { r -= kinds[ki].w; ki++; }
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * Math.PI);
+  mats[ki].push(new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), q, new THREE.Vector3(w, h, w * (ki ? 1 : .6 + rand() * .6))));
+  if (h > 22 && rand() < .5) crowns.push([x, h, z, w]);  // spire on top of some tall ones
+  if (h > 16) aviation.push(x, h + (h > 22 ? w * 1.6 : .4), z);
+  k++;
 }
-towers.count = k; scene.add(towers);
+kinds.forEach((kd, i) => {
+  const im = new THREE.InstancedMesh(kd.geo, towerMat, mats[i].length);
+  mats[i].forEach((mm, j) => im.setMatrixAt(j, mm)); scene.add(im);
+});
+const crownMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(.5, 1, 16).translate(0, .5, 0), towerMat, crowns.length);
+crowns.forEach(([x, h, z, w], j) => crownMesh.setMatrixAt(j,
+  new THREE.Matrix4().compose(new THREE.Vector3(x, h, z), new THREE.Quaternion(), new THREE.Vector3(w * .35, w * 1.6, w * .35))));
+scene.add(crownMesh);
 
 /* the spire: signature tower at the end of the boulevard */
 /* Burj Khalifa: Y-shaped plan, three wings stepping back in a spiral, central core, then the spire */
@@ -336,9 +358,18 @@ beacon.position.y = 170.5; spire.add(beacon);
 spire.position.set(0, 0, -150); scene.add(spire);
 const spireKey = new THREE.PointLight(0xcfdcff, 700, 200); spireKey.position.set(30, 90, -110); scene.add(spireKey);
 
+/* soft round glow sprite, used for every light so nothing renders as a square pixel */
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), gd = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gd.addColorStop(0, 'rgba(255,255,255,1)'); gd.addColorStop(.2, 'rgba(255,255,255,.85)');
+  gd.addColorStop(.5, 'rgba(255,255,255,.25)'); gd.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = gd; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+})();
+
 /* red aviation lights on the taller towers */
 const avG = new THREE.BufferGeometry(); avG.setAttribute('position', new THREE.Float32BufferAttribute(aviation, 3));
-const avMat = new THREE.PointsMaterial({color:0xff2a3a, size:.9, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
+const avMat = new THREE.PointsMaterial({color:0xff2a3a, size:2.2, map:glowTex, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
 scene.add(new THREE.Points(avG, avMat));
 
 /* ground: dark asphalt, warmed by sodium light around the interchange */
@@ -350,7 +381,9 @@ const ground = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800), new THREE.Mes
 ground.rotation.x = -Math.PI / 2; ground.position.set(0, 0, 60); scene.add(ground);
 
 /* highway interchange: orange-lit roads, loops, a flyover, with moving light trails */
-const roadMat = new THREE.MeshBasicMaterial({color:0xff9a4a, toneMapped:false});
+const roadMat = new THREE.MeshBasicMaterial({color:0xffb070, toneMapped:false});
+const roadGlow = new THREE.MeshBasicMaterial({color:0xff6a20, transparent:true, opacity:.18, depthWrite:false,
+  blending:THREE.AdditiveBlending, toneMapped:false});
 const rail = new THREE.MeshStandardMaterial({color:0x0b0b14, roughness:.6});
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const loop = (cx, cz, r, y) => Array.from({length:13}, (_, i) => { const a = i / 12 * Math.PI * 2; return V(cx + Math.cos(a) * r, y, cz + Math.sin(a) * r); });
@@ -368,30 +401,48 @@ const roadDefs = [
 const roadCurves = [];
 roadDefs.forEach(([pts, w, closed]) => {
   const c = new THREE.CatmullRomCurve3(pts, !!closed);
-  scene.add(new THREE.Mesh(new THREE.TubeGeometry(c, 240, w * 2.4, 5, !!closed), roadMat));
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(c, 240, w * 1.1, 8, !!closed), roadMat));        // bright core
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(c, 240, w * 4.5, 8, !!closed), roadGlow));       // soft sodium glow
   roadCurves.push(c);
 });
 // dark metro viaduct sweeping across, like the photo
 const metro = new THREE.CatmullRomCurve3([V(-160,8,150), V(-40,9,90), V(10,9,50), V(40,9,0), V(110,8,-60)]);
 scene.add(new THREE.Mesh(new THREE.TubeGeometry(metro, 240, 1.1, 8, false), rail));
 
-const TR = 70, trails = [], trG = new THREE.BufferGeometry();
-const trPos = new Float32Array(roadCurves.length * TR * 3), trCol = new Float32Array(roadCurves.length * TR * 3);
-roadCurves.forEach((c, ci) => { for (let i = 0; i < TR; i++) {
-  const red = rand() < .45, j = (ci * TR + i) * 3;
-  trails.push({c, t:rand(), v:(.02 + rand() * .03) * (red ? -1 : 1)});
-  trCol.set(red ? [1, .15, .1] : [1, .95, .85], j);
+/* cars: a glowing round light (white headlights / red taillights) dragging a fading long-exposure streak */
+const TR = 60, SEG = 6, trails = [];
+roadCurves.forEach(c => { for (let i = 0; i < TR; i++) {
+  const red = rand() < .45;
+  trails.push({c, t:rand(), v:(.012 + rand() * .02) * (red ? -1 : 1), col:red ? [1, .12, .08] : [1, .93, .8]});
 }});
-trG.setAttribute('position', new THREE.BufferAttribute(trPos, 3));
-trG.setAttribute('color', new THREE.BufferAttribute(trCol, 3));
-scene.add(new THREE.Points(trG, new THREE.PointsMaterial({size:1.6, vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending})));
+const nT = trails.length;
+const headG = new THREE.BufferGeometry(), headPos = new Float32Array(nT * 3), headCol = new Float32Array(nT * 3);
+const tailG = new THREE.BufferGeometry(), tailPos = new Float32Array(nT * SEG * 2 * 3), tailCol = new Float32Array(nT * SEG * 2 * 3);
+trails.forEach((p, i) => {
+  headCol.set(p.col, i * 3);
+  for (let s = 0; s < SEG; s++) for (let e = 0; e < 2; e++) {
+    const fade = 1 - (s + e) / SEG;                       // bright at the car, fading to nothing behind it
+    tailCol.set(p.col.map(c => c * fade * .9), ((i * SEG + s) * 2 + e) * 3);
+  }
+});
+headG.setAttribute('position', new THREE.BufferAttribute(headPos, 3)); headG.setAttribute('color', new THREE.BufferAttribute(headCol, 3));
+tailG.setAttribute('position', new THREE.BufferAttribute(tailPos, 3)); tailG.setAttribute('color', new THREE.BufferAttribute(tailCol, 3));
+scene.add(new THREE.LineSegments(tailG, new THREE.LineBasicMaterial({vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, toneMapped:false})));
+scene.add(new THREE.Points(headG, new THREE.PointsMaterial({size:2.4, map:glowTex, vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, toneMapped:false})));
 const trPt = new THREE.Vector3();
 function updateTrails(dt){
   trails.forEach((p, i) => {
-    p.t = (p.t + p.v * dt + 1) % 1; p.c.getPointAt(p.t, trPt);
-    trPos[i*3] = trPt.x; trPos[i*3+1] = trPt.y + 1.2; trPos[i*3+2] = trPt.z;
+    p.t = (p.t + p.v * dt + 1) % 1;
+    p.c.getPointAt(p.t, trPt); headPos.set([trPt.x, trPt.y + 1, trPt.z], i * 3);
+    const len = Math.abs(p.v) * 1.4, dir = Math.sign(p.v);
+    for (let s = 0; s <= SEG; s++) {
+      p.c.getPointAt(((p.t - dir * len * s / SEG) % 1 + 1) % 1, trPt);
+      const v = [trPt.x, trPt.y + 1, trPt.z], base = i * SEG * 2;
+      if (s < SEG) tailPos.set(v, (base + s * 2) * 3);
+      if (s > 0) tailPos.set(v, (base + (s - 1) * 2 + 1) * 3);
+    }
   });
-  trG.attributes.position.needsUpdate = true;
+  headG.attributes.position.needsUpdate = true; tailG.attributes.position.needsUpdate = true;
 }
 updateTrails(0);
 
@@ -399,7 +450,7 @@ updateTrails(0);
 const P = 1200, pg = new THREE.BufferGeometry(), pp = new Float32Array(P * 3);
 for (let i = 0; i < P; i++) { pp[i*3] = (rand()-.5)*90; pp[i*3+1] = rand()*60; pp[i*3+2] = -rand()*200 + 20; }
 pg.setAttribute('position', new THREE.BufferAttribute(pp, 3));
-const dust = new THREE.Points(pg, new THREE.PointsMaterial({color:0xf4b63f, size:.18, transparent:true, opacity:.75, depthWrite:false, blending:THREE.AdditiveBlending}));
+const dust = new THREE.Points(pg, new THREE.PointsMaterial({color:0xffd9b0, size:.5, map:glowTex, transparent:true, opacity:.75, depthWrite:false, blending:THREE.AdditiveBlending}));
 scene.add(dust);
 
 /* ---------- camera path driven by scroll ---------- */
